@@ -19,6 +19,10 @@ def parse_args():
         '--amp', action='store_true', help='enable automatic-mixed-precision')
     parser.add_argument('--resume', action='store_true', help='resume from ckpt')
     parser.add_argument('--max-iters', type=int, default=None)
+    parser.add_argument(
+        '--no-cbgs',
+        action='store_true',
+        help='disable the CBGSDataset wrapper defined in the config')
     return parser.parse_args()
 
 
@@ -35,6 +39,10 @@ def main():
         cfg.optim_wrapper.type = 'AmpOptimWrapper'
         cfg.optim_wrapper.setdefault('loss_scale', 'dynamic')
     cfg.resume = args.resume
+    if args.no_cbgs and cfg.train_dataloader.dataset.get(
+            'type', None) == 'CBGSDataset':
+        cfg.train_dataloader.dataset = cfg.train_dataloader.dataset['dataset']
+        cfg.train_dataloader.batch_size = 1
     if args.max_iters is not None:
         cfg.train_cfg = dict(
             by_epoch=False,

@@ -93,37 +93,47 @@ test_pipeline = [
     dict(type='Pack3DDetInputs', keys=['img'], meta_keys=meta_keys),
 ]
 
+train_dataset = dict(
+    type='NuScenesDataset',
+    data_root=data_root,
+    ann_file=data_root + 'nuscenes_infos_train.pkl',
+    pipeline=train_pipeline,
+    modality=input_modality,
+    metainfo=dict(classes=class_names),
+    box_type_3d='LiDAR',
+    use_valid_flag=True,
+    test_mode=False)
+
+# Class-balanced Grouping and Sampling is the official recipe of BEVDet-r50.
+# The wrapper makes one epoch contain ~123k samples instead of ~28k.
+# It can be turned off with `tools/train.py --no-cbgs` (e.g. for quick runs).
+cbgs = True
+
 train_dataloader = dict(
-    batch_size=1,
-    num_workers=2,
+    batch_size=8 if cbgs else 1,
+    num_workers=4,
     persistent_workers=True,
     sampler=dict(type='DefaultSampler', shuffle=True),
-    dataset=dict(
-        type='NuScenesDataset',
-        data_root=data_root,
-        ann_file=data_root + 'nuscenes_infos_train.pkl',
-        pipeline=train_pipeline,
-        modality=input_modality,
-        metainfo=dict(classes=class_names),
-        box_type_3d='LiDAR',
-        use_valid_flag=True,
-        test_mode=False))
+    dataset=dict(type='CBGSDataset', dataset=train_dataset) if cbgs else
+    train_dataset)
+
+val_dataset = dict(
+    type='NuScenesDataset',
+    data_root=data_root,
+    ann_file=data_root + 'nuscenes_infos_val.pkl',
+    pipeline=test_pipeline,
+    modality=input_modality,
+    metainfo=dict(classes=class_names),
+    box_type_3d='LiDAR',
+    use_valid_flag=True,
+    test_mode=True)
 
 val_dataloader = dict(
     batch_size=1,
     num_workers=2,
     persistent_workers=True,
     sampler=dict(type='DefaultSampler', shuffle=False),
-    dataset=dict(
-        type='NuScenesDataset',
-        data_root=data_root,
-        ann_file=data_root + 'nuscenes_infos_val.pkl',
-        pipeline=test_pipeline,
-        modality=input_modality,
-        metainfo=dict(classes=class_names),
-        box_type_3d='LiDAR',
-        use_valid_flag=True,
-        test_mode=True))
+    dataset=val_dataset)
 
 val_evaluator = dict(
     type='NuScenesMetric',
