@@ -83,11 +83,61 @@ class QuickCumsumCuda(torch.autograd.Function):
             None, None, None
 
 
+def bev_pool_v2_cpu(depth, feat, ranks_depth, ranks_feat, ranks_bev,
+                    bev_feat_shape, interval_starts, interval_lengths):
+    r"""Pure PyTorch implementation of BEVPoolv2.
+
+    It is the CPU fallback of :class:`QuickCumsumCuda`, which keeps exactly the
+    same semantics as ``bev_pool_v2_kernel``: for every interval (a group of
+    points falling into the same BEV voxel) the weighted features are summed and
+    written to ``out[ranks_bev[interval_start]]``.
+
+    Args:
+        depth (torch.tensor): FloatTensor[b, n, d, h, w].
+        feat (torch.tensor): FloatTensor[b, n, h, w, c].
+        ranks_depth (torch.tensor): IntTensor[n_points].
+        ranks_feat (torch.tensor): IntTensor[n_points].
+        ranks_bev (torch.tensor): IntTensor[n_points].
+        bev_feat_shape (tuple[int]): (b, z, y, x, c).
+        interval_starts (torch.tensor): IntTensor[n_intervals].
+        interval_lengths (torch.tensor): IntTensor[n_intervals].
+
+    Returns:
+        torch.tensor: FloatTensor[b, z, y, x, c].
+    """
+    c = feat.shape[-1]
+    depth_flat = depth.contiguous().view(-1)
+    feat_flat = feat.contiguous().view(-1, c)
+    ranks_depth = ranks_depth.long()
+    ranks_feat = ranks_feat.long()
+    interval_starts = interval_starts.long()
+    interval_lengths = interval_lengths.long()
+
+    # depth_i * feat_i for every point -> (n_points, c)
+    vals = depth_flat[ranks_depth].unsqueeze(-1) * feat_flat[ranks_feat]
+
+    # segment sum over intervals -> (n_intervals, c)
+    n_intervals = interval_lengths.shape[0]
+    seg_ids = torch.repeat_interleave(
+        torch.arange(n_intervals, device=depth.device), interval_lengths)
+    interval_sums = vals.new_zeros(n_intervals, c)
+    interval_sums = interval_sums.index_add(0, seg_ids, vals)
+
+    # scatter the sum of every interval to its bev voxel
+    out = depth.new_zeros(bev_feat_shape).view(-1, c)
+    out = out.index_add(0, ranks_bev[interval_starts], interval_sums)
+    return out.view(bev_feat_shape)
+
+
 def bev_pool_v2(depth, feat, ranks_depth, ranks_feat, ranks_bev,
                 bev_feat_shape, interval_starts, interval_lengths):
-    x = QuickCumsumCuda.apply(depth, feat, ranks_depth, ranks_feat, ranks_bev,
-                              bev_feat_shape, interval_starts,
-                              interval_lengths)
+    if depth.is_cuda:
+        x = QuickCumsumCuda.apply(depth, feat, ranks_depth, ranks_feat,
+                                  ranks_bev, bev_feat_shape, interval_starts,
+                                  interval_lengths)
+    else:
+        x = bev_pool_v2_cpu(depth, feat, ranks_depth, ranks_feat, ranks_bev,
+                            bev_feat_shape, interval_starts, interval_lengths)
     x = x.permute(0, 4, 1, 2, 3).contiguous()
     return x
 
